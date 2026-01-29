@@ -3,7 +3,6 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable-small";
-    flake-utils.url = "github:numtide/flake-utils";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -22,13 +21,20 @@
     {
       self,
       nixpkgs,
-      flake-utils,
       rust-overlay,
       nix-github-actions,
       treefmt-nix,
       ...
     }:
     let
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
+      forAllSystems = nixpkgs.lib.genAttrs systems;
+
       cargo-toml = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package;
       inherit (cargo-toml) name;
 
@@ -45,6 +51,7 @@
 
           postInstall = ''
             ln -s $out/bin/${name} $out/bin/sudo
+            ln -s $out/bin/${name} $out/bin/sudoedit
           '';
 
           meta = {
@@ -55,63 +62,86 @@
           };
         };
 
-      outputs = flake-utils.lib.eachDefaultSystem (
+      pkgsFor =
+        system:
+        import nixpkgs {
+          inherit system;
+          overlays = [ (import rust-overlay) ];
+        };
+    in
+    {
+      packages = forAllSystems (
         system:
         let
-          overlays = [ (import rust-overlay) ];
-          pkgs = import nixpkgs {
-            inherit system overlays;
-          };
-          rustToolchain = pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-          treefmtEval = treefmt-nix.lib.evalModule pkgs ./treefmt.nix;
+          pkgs = pkgsFor system;
         in
         {
-          packages.${name} = build-pkg pkgs;
-          packages.default = self.packages.${system}.${name};
+          ${name} = build-pkg pkgs;
+          default = self.packages.${system}.${name};
+        }
+      );
 
-          devShells.default = pkgs.mkShell {
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+          rustToolchain = pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+        in
+        {
+          default = pkgs.mkShell {
             buildInputs = [
               rustToolchain
               pkgs.rust-analyzer
             ];
           };
-
-          formatter = treefmtEval.config.build.wrapper;
-
-          checks = {
-            formatting = treefmtEval.config.build.check self;
-            vm = pkgs.testers.runNixOSTest {
-              name = "run0-sudo-shim-vm-test";
-              nodes.machine = {
-                imports = [ self.nixosModules.default ];
-                security.polkit.persistentAuthentication = true;
-                security.run0-sudo-shim.enable = true;
-
-                users.users = {
-                  admin = {
-                    isNormalUser = true;
-                    extraGroups = [ "wheel" ];
-                  };
-                  noadmin = {
-                    isNormalUser = true;
-                  };
-                };
-              };
-              testScript = ''
-                # machine.succeed('su - admin -c "sudo -v"') # can't yet give password, needs hacks to never ask for password in the test or enter the password
-                machine.fail('su - noadmin -c "sudo -v"')
-              '';
-            };
-          }
-          // self.packages.${system};
         }
       );
-    in
-    outputs
-    // {
+
+      formatter = forAllSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+          treefmtEval = treefmt-nix.lib.evalModule pkgs ./treefmt.nix;
+        in
+        treefmtEval.config.build.wrapper
+      );
+
+      checks = forAllSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+          treefmtEval = treefmt-nix.lib.evalModule pkgs ./treefmt.nix;
+        in
+        {
+          formatting = treefmtEval.config.build.check self;
+          vm = pkgs.testers.runNixOSTest {
+            name = "run0-sudo-shim-vm-test";
+            nodes.machine = {
+              imports = [ self.nixosModules.default ];
+              security.polkit.persistentAuthentication = true;
+              security.run0-sudo-shim.enable = true;
+
+              users.users = {
+                admin = {
+                  isNormalUser = true;
+                  extraGroups = [ "wheel" ];
+                };
+                noadmin = {
+                  isNormalUser = true;
+                };
+              };
+            };
+            testScript = ''
+              # machine.succeed('su - admin -c "sudo -v"') # can't yet give password, needs hacks to never ask for password in the test or enter the password
+              machine.fail('su - noadmin -c "sudo -v"')
+            '';
+          };
+        }
+        // self.packages.${system}
+      );
 
       githubActions = nix-github-actions.lib.mkGithubMatrix {
-        checks = nixpkgs.lib.getAttrs [ "x86_64-linux" ] outputs.checks;
+        checks = nixpkgs.lib.getAttrs [ "x86_64-linux" ] self.checks;
       };
 
       overlays.default = final: prev: { ${name} = build-pkg prev; };
