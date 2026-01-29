@@ -25,21 +25,26 @@
       inherit (nixpkgs) lib;
       cargo-toml = (lib.importTOML ./Cargo.toml).package;
       inherit (cargo-toml) name;
+      systems = lib.systems.doubles.linux;
+      pkgsFor = system: nixpkgs.legacyPackages.${system} or (import nixpkgs { inherit system; });
       forEachSystem =
         f:
-        builtins.listToAttrs (
-          map
-            (system: {
-              name = system;
-              value = f {
-                inherit system;
-                pkgs = nixpkgs.legacyPackages.${system};
-              };
-            })
-            [
-              "x86_64-linux"
-              "aarch64-linux"
-            ]
+        lib.genAttrs systems (
+          system:
+          f {
+            inherit system;
+            pkgs = pkgsFor system;
+          }
+        );
+      # The NixOS VM test only runs on natively-virtualisable hosts.
+      forEachTestSystem =
+        f:
+        lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (
+          system:
+          f {
+            inherit system;
+            pkgs = pkgsFor system;
+          }
         );
 
       package =
@@ -76,6 +81,7 @@
             installShellCompletion \
               target/tmp/run0-sudo-shim/completion/sudo.{bash,fish} \
               --zsh target/tmp/run0-sudo-shim/completion/_sudo
+            ln -s $out/bin/${name} $out/bin/sudoedit
           '';
 
           meta = {
@@ -114,7 +120,7 @@
 
       formatter = forEachSystem ({ pkgs, ... }: (treefmtEval pkgs).config.build.wrapper);
 
-      checks = forEachSystem (
+      checks = forEachTestSystem (
         { pkgs, system }:
         {
           formatting = (treefmtEval pkgs).config.build.check self;
