@@ -30,7 +30,7 @@ pub struct SudoCli {
     #[clap(long, short = 'E', value_delimiter(','), num_args(0..), require_equals(true))]
     pub preserve_env: Option<Vec<String>>,
 
-    /// [UNSUPPORTED] edit files instead of running a command
+    /// edit files instead of running a command; also triggered when invoked as sudoedit
     #[clap(long, short, default_value_t = false)]
     pub edit: bool,
 

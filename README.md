@@ -64,7 +64,7 @@ Options:
   -E, --preserve-env[=<PRESERVE_ENV>...]
           preserve user environment when running command. If no explicit list of environment variables is supplied, preserves all variables except a narrow blocklist. This is considered insecure and a warning will be emitted
   -e, --edit
-          [UNSUPPORTED] edit files instead of running a command
+          edit files instead of running a command; also triggered when invoked as sudoedit
   -g, --group <GROUP>
           run command as the specified group name or ID
   -H, --set-home
